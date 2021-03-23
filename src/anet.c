@@ -224,6 +224,7 @@ int anetResolve(char *err, char *host, char *ipbuf, size_t ipbuf_len,
                        int flags)
 {
     struct addrinfo hints, *info;
+    struct sockaddr_storage sa;
     int rv;
 
     memset(&hints,0,sizeof(hints));
@@ -235,15 +236,16 @@ int anetResolve(char *err, char *host, char *ipbuf, size_t ipbuf_len,
         anetSetError(err, "%s", gai_strerror(rv));
         return ANET_ERR;
     }
-    if (info->ai_family == AF_INET) {
-        struct sockaddr_in *sa = (struct sockaddr_in *)info->ai_addr;
-        inet_ntop(AF_INET, &(sa->sin_addr), ipbuf, ipbuf_len);
-    } else {
-        struct sockaddr_in6 *sa = (struct sockaddr_in6 *)info->ai_addr;
-        inet_ntop(AF_INET6, &(sa->sin6_addr), ipbuf, ipbuf_len);
+
+    memcpy(&sa, info->ai_addr, info->ai_addrlen);
+    freeaddrinfo(info);
+
+    if ((rv = getnameinfo((struct sockaddr *)&sa,sizeof(sa),ipbuf,ipbuf_len,
+                          0,0,NI_NUMERICHOST)) != 0) {
+        anetSetError(err, "%s", gai_strerror(rv));
+        return ANET_ERR;
     }
 
-    freeaddrinfo(info);
     return ANET_OK;
 }
 
@@ -515,15 +517,14 @@ int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
     if ((fd = anetGenericAccept(err,s,(struct sockaddr*)&sa,&salen)) == -1)
         return ANET_ERR;
 
-    if (sa.ss_family == AF_INET) {
-        struct sockaddr_in *s = (struct sockaddr_in *)&sa;
-        if (ip) inet_ntop(AF_INET,(void*)&(s->sin_addr),ip,ip_len);
-        if (port) *port = ntohs(s->sin_port);
-    } else {
-        struct sockaddr_in6 *s = (struct sockaddr_in6 *)&sa;
-        if (ip) inet_ntop(AF_INET6,(void*)&(s->sin6_addr),ip,ip_len);
-        if (port) *port = ntohs(s->sin6_port);
-    }
+    char portstr[NI_MAXSERV];
+    memset(&portstr, 0, sizeof(portstr));
+    if (getnameinfo((struct sockaddr *)&sa,salen,ip,ip_len,portstr,
+                    sizeof(portstr),NI_NUMERICHOST|NI_NUMERICSERV))
+      return ANET_ERR;
+
+    if (port) *port = atoi(portstr);
+
     return fd;
 }
 
@@ -554,7 +555,7 @@ int anetFdToString(int fd, char *ip, size_t ip_len, int *port, int fd_to_str_typ
         if (port) *port = ntohs(s->sin_port);
     } else if (sa.ss_family == AF_INET6) {
         struct sockaddr_in6 *s = (struct sockaddr_in6 *)&sa;
-        if (ip) inet_ntop(AF_INET6,(void*)&(s->sin6_addr),ip,ip_len);
+        if (ip) getnameinfo((struct sockaddr *)&sa,salen,ip,ip_len,0,0,NI_NUMERICHOST);
         if (port) *port = ntohs(s->sin6_port);
     } else if (sa.ss_family == AF_UNIX) {
         if (ip) snprintf(ip, ip_len, "/unixsocket");
@@ -587,7 +588,7 @@ int anetFormatAddr(char *buf, size_t buf_len, char *ip, int port) {
 
 /* Like anetFormatAddr() but extract ip and port from the socket's peer/sockname. */
 int anetFormatFdAddr(int fd, char *buf, size_t buf_len, int fd_to_str_type) {
-    char ip[INET6_ADDRSTRLEN];
+    char ip[NI_MAXHOST];
     int port;
 
     anetFdToString(fd,ip,sizeof(ip),&port,fd_to_str_type);

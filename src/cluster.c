@@ -35,6 +35,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -1354,21 +1355,7 @@ int clusterHandshakeInProgress(char *ip, int port, int cport) {
 int clusterStartHandshake(char *ip, int port, int cport) {
     clusterNode *n;
     char norm_ip[NET_IP_STR_LEN];
-    struct sockaddr_storage sa;
-
-    /* IP sanity check */
-    if (inet_pton(AF_INET,ip,
-            &(((struct sockaddr_in *)&sa)->sin_addr)))
-    {
-        sa.ss_family = AF_INET;
-    } else if (inet_pton(AF_INET6,ip,
-            &(((struct sockaddr_in6 *)&sa)->sin6_addr)))
-    {
-        sa.ss_family = AF_INET6;
-    } else {
-        errno = EINVAL;
-        return 0;
-    }
+    memset(norm_ip,0,sizeof(norm_ip));
 
     /* Port sanity check */
     if (port <= 0 || port > 65535 || cport <= 0 || cport > 65535) {
@@ -1378,15 +1365,10 @@ int clusterStartHandshake(char *ip, int port, int cport) {
 
     /* Set norm_ip as the normalized string representation of the node
      * IP address. */
-    memset(norm_ip,0,NET_IP_STR_LEN);
-    if (sa.ss_family == AF_INET)
-        inet_ntop(AF_INET,
-            (void*)&(((struct sockaddr_in *)&sa)->sin_addr),
-            norm_ip,NET_IP_STR_LEN);
-    else
-        inet_ntop(AF_INET6,
-            (void*)&(((struct sockaddr_in6 *)&sa)->sin6_addr),
-            norm_ip,NET_IP_STR_LEN);
+    if (anetResolve(NULL,ip,norm_ip,sizeof(norm_ip),ANET_IP_ONLY) != ANET_OK) {
+        errno = EINVAL;
+        return 0;
+    }
 
     if (clusterHandshakeInProgress(norm_ip,port,cport)) {
         errno = EAGAIN;
